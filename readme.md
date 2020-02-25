@@ -123,6 +123,7 @@ There are many ways to run Firefly III
 5. You can [install it using AMPPS](https://www.ampps.com/).
 6. You can [install it on Cloudron](https://cloudron.io/store/org.fireflyiii.cloudronapp.html).
 7. You can [install it on Lando](https://gist.github.com/ArtisKrumins/ccb24f31d6d4872b57e7c9343a9d1bf0).
+8. You can [run it on AWS]()
 
 ## Contributing
 

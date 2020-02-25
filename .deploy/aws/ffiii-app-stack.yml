@@ -1,0 +1,273 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  Thank you to the help @ © 2020 GitHub, Inc.
+
+  https://github.com/awsdocs/aws-cloudformation-user-guide/blob/master/doc_source/aws-resource-ecs-taskdefinition.md
+Parameters:
+  ContainerName:
+    Type: String
+    Default: "Firefly3Container"
+  MyALBName:
+    Type: 'String'
+    Default: 'ffiii-alb'
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+  HostPort:
+    Type: Number
+    Default: 8010
+    Description: Port on which the docker container will be listening for traffic
+  DomainHostedZone:
+    Type: String
+  ALBSubnetList:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+  ALBExistingCertArn:
+    Type: String
+  PublicName:
+    Type: String
+Resources:
+  Route53RecordSet:
+    DependsOn:
+      - ALBInstance
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Tags:
+        Purpose: FireflyIII
+      Name: !Ref PublicName
+      HostedZoneId: !Ref DomainHostedZone
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ALBInstance.DNSName
+        HostedZoneId: !GetAtt ALBInstance.CanonicalHostedZoneID
+  Firefly3TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: instance
+      Port: !Ref HostPort
+      Protocol: HTTP
+  ALBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    DeletionPolicy: Retain
+    Properties:
+      GroupDescription: "Allow incoming from anywhere to HTTPS and HTTP"
+      SecurityGroupIngress:
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 80
+          IpProtocol: "tcp"
+          ToPort: 80
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 443
+          IpProtocol: "tcp"
+          ToPort: 443
+      Tags:
+        - Key: "Used by"
+          Value: !Ref "MyALBName"
+      VpcId: !Ref "VpcId"
+  ALBListenerSSL:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: "forward"
+          TargetGroupArn: !Ref Firefly3TargetGroup
+      Certificates:
+        - CertificateArn: !Ref ALBExistingCertArn
+      LoadBalancerArn: !Ref 'ALBInstance'
+      Port: 443
+      Protocol: 'HTTPS'
+  PublicLoadBalancerHttpRedirectListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Description: https://stackoverflow.com/a/53498717
+    DependsOn:
+      - ALBInstance
+    Properties:
+      DefaultActions:
+        - RedirectConfig:
+            Host: "#{host}"
+            Path: "/#{path}"
+            Port: 443
+            Protocol: "HTTPS"
+            Query: "#{query}"
+            StatusCode: HTTP_301
+          Type: redirect
+      LoadBalancerArn: !Ref 'ALBInstance'
+      Port: 80
+      Protocol: HTTP
+  ALBInstance:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      LoadBalancerAttributes:
+        - Key: 'deletion_protection.enabled'
+          Value: false
+        - Key: 'access_logs.s3.enabled'
+          Value: false
+      Name: !Sub  'alb-${MyALBName}'
+      Scheme: 'internet-facing'
+      Subnets: !Ref 'ALBSubnetList'
+      SecurityGroups:
+        - !Ref 'ALBSecurityGroup'
+        - !ImportValue AllTCPToGeneralPurposeSecurityGroup
+  GetSSMPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn:
+      - FireFlyECSRole
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ssm:GetParameters'
+            Resource: '*'
+      PolicyName: EnableSSMAccess
+      Roles:
+        - !Ref FireFlyECSRole
+  FireflyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: FireflyServiceRole
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                  - ec2:Describe*
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - elasticloadbalancing:Describe*
+                  - elasticloadbalancing:DeregisterInstancesFromLoadBalancer
+                  - elasticloadbalancing:RegisterInstancesWithLoadBalancer
+                  - elasticloadbalancing:DeregisterTargets
+                  - elasticloadbalancing:RegisterTargets
+  FireFlyECSRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  Firefly3Service:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - Firefly3TaskDef
+      - ALBInstance
+      - Firefly3TargetGroup
+      - ALBListenerSSL
+    Properties:
+      TaskDefinition: !Ref Firefly3TaskDef
+      ServiceName: !Sub FireflyService-${AWS::StackName}
+      Cluster: !ImportValue GeneralPurposeECSCluster
+      SchedulingStrategy: DAEMON
+      LaunchType: EC2
+      Role: !Ref FireflyServiceRole
+      LoadBalancers:
+        - ContainerName: !Ref ContainerName
+          ContainerPort: 80
+          TargetGroupArn: !Ref Firefly3TargetGroup
+      Tags:
+        Purpose: FireflyIII
+  Firefly3TaskDef:
+    DependsOn:
+      - FireFlyECSRole
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Tags:
+        Purpose: FireflyIII
+      RequiresCompatibilities:
+        - "EC2"
+      ExecutionRoleArn: !Ref FireFlyECSRole
+      Volumes:
+        -
+          Name: firefly_iii_export
+          Host:
+            SourcePath: /var/www/firefly-iii/storage/export
+        - Name: firefly_iii_upload
+          Host:
+            SourcePath: /var/www/firefly-iii/storage/upload
+      ContainerDefinitions:
+      -
+        Name: !Ref ContainerName 
+        Image: jc5x/firefly-iii:stable
+        PortMappings:
+          -
+            HostPort: !Ref HostPort
+            Protocol: tcp
+            ContainerPort: 80
+          -
+            HostPort: 8011
+            Protocol: tcp
+            ContainerPort: 443
+        MemoryReservation: 375
+        MountPoints:
+        - ReadOnly: false
+          ContainerPath: "/var/www/firefly-iii/storage/export"
+          SourceVolume: firefly_iii_export
+        - ReadOnly: false
+          ContainerPath: "/var/www/firefly-iii/storage/upload"
+          SourceVolume: firefly_iii_upload
+        WorkingDirectory: "/var/www/firefly-iii"
+
+        Environment:
+        - Name: DB_CONNECTION
+          Value: mysql
+        - Name: DB_DATABASE
+          Value: ffiii
+        - Name: DB_HOST
+          Value: !ImportValue 'serverless-mysql-DBHost'
+        - Name: DB_PORT
+          Value: '3306'
+        - Name: APP_URL
+          Value: !Sub https://${PublicName}
+        - Name: TRUSTED_PROXIES
+          Value: '**'
+        Secrets:
+          - Name: DB_USERNAME
+            ValueFrom: firefly-db-user
+          - Name: DB_PASSWORD
+            ValueFrom: firefly-db-password
+          - Name: APP_KEY
+            ValueFrom: firefly-app-key
+      Memory: '512'
+      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole
+      Family: ff-iii-bridge
+      RequiresCompatibilities:
+      - EC2
+      NetworkMode: bridge
+Outputs:
+  Firefly3TaskDefARN:
+    Description: ARN of the FF3 Task
+    Value: !Ref Firefly3TaskDef
+    Export:
+      Name: Firefly3TaskDefARN
+  Firefly3TargetGroup:
+    Description: Arn of the FF3 Target Group
+    Value: !Ref Firefly3TargetGroup
+    Export:
+      Name: Firefly3TargetGroup
+  Firefly3LoadBalancer:
+    Description: Firefly 3 load balancer
+    Value: !Ref ALBInstance
+    Export:
+      Name: Firefly3LoadBalancer
+  HostPort:
+    Description: What port will we get traffic on the container
+    Value: !Ref HostPort
+    Export:
+      Name: Firefly3HostPort

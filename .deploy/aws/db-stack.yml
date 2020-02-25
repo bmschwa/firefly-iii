@@ -1,0 +1,83 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: |
+  Aurora serverless cluster.
+
+  Based on https://github.com/awslabs/aws-cloudformation-templates/blob/master/community/services/RDS/aurora-serverless/template.yml
+
+Parameters:
+  DatabaseName:
+    Type: String
+    Default: master_db
+  EngineVersion:
+    Type: String
+    Default: '5.6'
+  MasterUsername:
+    Type: String
+    Default: root
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  KeyId:
+    Type: String
+    Description: Key used to encrypt the DB
+Resources:
+  ClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    Properties:
+      GroupDescription: Any app wanting to access the database, should attach this security group to their iam
+      VpcId: !Ref VpcId
+  ClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Bastion for ${AWS::StackName}'
+      SecurityGroupEgress:
+        - DestinationSecurityGroupId: !Ref ClientSecurityGroup
+          FromPort: -1
+          ToPort: -1
+          IpProtocol: '-1'
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref ClientSecurityGroup
+          IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+      VpcId: !Ref VpcId
+  Cluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora
+      EngineMode: serverless
+      EngineVersion: !Ref EngineVersion
+      DatabaseName: !Ref DatabaseName
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: '{{resolve:ssm-secure:RDSMasterDBPassword:1}}'
+      DBClusterIdentifier: !Sub ${AWS::StackName}-db-cluster
+      BackupRetentionPeriod: 14
+      DeletionProtection: true
+      StorageEncrypted: true
+      Port: 3306
+      KmsKeyId: !Ref KeyId
+      VpcSecurityGroupIds:
+        - !Ref ClusterSecurityGroup
+      ScalingConfiguration:
+        AutoPause: true
+        MaxCapacity: 8
+        MinCapacity: 1
+        MinCapacity: 1
+        SecondsUntilAutoPause: 300
+
+Outputs:
+  Host:
+    Value: !GetAtt Cluster.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DBHost'
+  Port:
+    Value: !GetAtt Cluster.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-DBPort'
+  ClientSecurityGroup:
+    Value: !Ref ClientSecurityGroup
+    Description: The security group we should be a part of in order to access the db
+    Export:
+      Name: !Sub '${AWS::StackName}-DBClientSG'
