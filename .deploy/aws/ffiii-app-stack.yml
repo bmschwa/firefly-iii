@@ -30,8 +30,6 @@ Resources:
       - ALBInstance
     Type: AWS::Route53::RecordSet
     Properties:
-      Tags:
-        Purpose: FireflyIII
       Name: !Ref PublicName
       HostedZoneId: !Ref DomainHostedZone
       Type: A
@@ -60,8 +58,10 @@ Resources:
           IpProtocol: "tcp"
           ToPort: 443
       Tags:
-        - Key: "Used by"
+        - Key: "UsedBy"
           Value: !Ref "MyALBName"
+        - Key: Purpose
+          Value: FireflyIII
       VpcId: !Ref "VpcId"
   ALBListenerSSL:
     Type: 'AWS::ElasticLoadBalancingV2::Listener'
@@ -182,14 +182,16 @@ Resources:
           ContainerPort: 80
           TargetGroupArn: !Ref Firefly3TargetGroup
       Tags:
-        Purpose: FireflyIII
+        - Key: Purpose
+          Value: FireflyIII
   Firefly3TaskDef:
     DependsOn:
       - FireFlyECSRole
     Type: AWS::ECS::TaskDefinition
     Properties:
       Tags:
-        Purpose: FireflyIII
+        - Key: Purpose
+          Value: FireflyIII
       RequiresCompatibilities:
         - "EC2"
       ExecutionRoleArn: !Ref FireFlyECSRole
@@ -223,7 +225,6 @@ Resources:
           ContainerPath: "/var/www/firefly-iii/storage/upload"
           SourceVolume: firefly_iii_upload
         WorkingDirectory: "/var/www/firefly-iii"
-
         Environment:
         - Name: DB_CONNECTION
           Value: mysql
