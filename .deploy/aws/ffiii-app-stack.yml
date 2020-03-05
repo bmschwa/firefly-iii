@@ -43,6 +43,12 @@ Resources:
       TargetType: instance
       Port: !Ref HostPort
       Protocol: HTTP
+      HealthCheckEnabled: True
+      Matcher:
+        HttpCode: 200,302
+      HealthyThresholdCount: 2
+      HealthCheckPath: /login
+      HealthCheckIntervalSeconds: 55
   ALBSecurityGroup:
     Type: "AWS::EC2::SecurityGroup"
     DeletionPolicy: Retain
@@ -212,10 +218,14 @@ Resources:
             HostPort: !Ref HostPort
             Protocol: tcp
             ContainerPort: 80
-          -
-            HostPort: 8011
-            Protocol: tcp
-            ContainerPort: 443
+        HealthCheck:
+          Command:
+            - "CMD-SHELL"
+            - "curl -f http://localhost/login || exit 1"
+          Interval: 45
+          Retries: 3
+          StartPeriod: 240
+          Timeout: 2
         MemoryReservation: 375
         MountPoints:
         - ReadOnly: false
