@@ -24,6 +24,11 @@ Parameters:
     Type: String
   PublicName:
     Type: String
+    Description: The hostname of the firefly instance
+  DefaultRedirectDomain:
+    Type: String
+    Default: www.example.com
+    Description: Redirect traffic here if the name doesnt match
 Resources:
   Route53RecordSet:
     DependsOn:
@@ -69,12 +74,30 @@ Resources:
         - Key: Purpose
           Value: FireflyIII
       VpcId: !Ref "VpcId"
+  FF3ListenerRule:
+    DependsOn:
+      - ALBListenerSSL
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+        - Type: "forward"
+          TargetGroupArn: !Ref Firefly3TargetGroup
+      ListenerArn: !Ref ALBListenerSSL
+      Priority: 1
+      Conditions:
+        - Field: 'host-header'
+          Values:
+            - !Ref PublicName
   ALBListenerSSL:
     Type: 'AWS::ElasticLoadBalancingV2::Listener'
     Properties:
       DefaultActions:
-        - Type: "forward"
-          TargetGroupArn: !Ref Firefly3TargetGroup
+        - Type: "redirect"
+          RedirectConfig:
+            Host: !Ref DefaultRedirectDomain
+            Port: 443
+            Protocol: 'HTTPS'
+            StatusCode: HTTP_302
       Certificates:
         - CertificateArn: !Ref ALBExistingCertArn
       LoadBalancerArn: !Ref 'ALBInstance'
